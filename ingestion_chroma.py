@@ -1,4 +1,4 @@
-import os 
+import os
 import uuid
 import tempfile
 from pptx import Presentation
@@ -24,7 +24,7 @@ text_client = AzureOpenAI(
 blob_client = BlobServiceClient.from_connection_string(BLOB_CONN)
 container_client = blob_client.get_container_client(BLOB_CONTAINER)
 
-# === CHROMA CLIENT (new syntax) ===
+# === CHROMA CLIENT ===
 chroma_client = PersistentClient(path=CHROMA_PERSIST_DIR)
 try:
     collection = chroma_client.get_collection("ppt_slides")
@@ -33,7 +33,9 @@ except Exception:
 
 EMBEDDING_DIM = get_embedding_dim(EMBEDDING_MODEL)
 
-# === FUNCTIONS ===
+# -------------------------------------------------
+# FUNCTIONS
+# -------------------------------------------------
 def extract_slides(local_path):
     """Extract text content from all slides in a PPT."""
     prs = Presentation(local_path)
@@ -43,40 +45,45 @@ def extract_slides(local_path):
         for shape in slide.shapes:
             if hasattr(shape, "text") and shape.text and shape.text.strip():
                 texts.append(shape.text.strip())
-        slides.append({"index": i, "text": "\n".join(texts)})
+        slides.append({
+            "index": i,
+            "text": "\n".join(texts)
+        })
     return slides
 
 
 def simple_tagger(text):
-    """Create simple topic tags based on content keywords."""
     text_l = text.lower()
     tags = set()
+
     if any(k in text_l for k in ["design", "architecture", "ui", "ux"]):
         tags.add("Design")
     if any(k in text_l for k in ["test", "qa", "verification"]):
         tags.add("Test")
     if any(k in text_l for k in ["migration", "migrate"]):
         tags.add("Migration")
+
     for domain in ["claims", "membership", "provider", "finance", "medicaid", "commercial"]:
         if domain in text_l:
             tags.add(domain.capitalize())
+
     return list(tags) or ["General"]
 
 
 def ppt_already_indexed(ppt_name):
-    """Check if PPT is already embedded in Chroma."""
     try:
         res = collection.query(where={"ppt_name": ppt_name}, n_results=1)
-        ids = res.get("ids", [[]])[0]
-        return len(ids) > 0
+        return bool(res.get("ids", [[]])[0])
     except Exception:
         return False
 
 
 def azure_embed_func(texts):
-    """Generate embeddings from Azure OpenAI."""
     try:
-        resp = text_client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+        resp = text_client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=texts
+        )
         return [d.embedding for d in resp.data]
     except Exception as e:
         logger.exception(f"Embedding failed: {e}")
@@ -84,9 +91,13 @@ def azure_embed_func(texts):
 
 
 def process_blob(blob_name):
-    """Download PPT, extract slides, generate embeddings, and insert into Chroma."""
     logger.info(f"Processing blob: {blob_name}")
-    tmp_path = os.path.join(tempfile.gettempdir(), blob_name.replace("/", "_"))
+
+    tmp_path = os.path.join(
+        tempfile.gettempdir(),
+        blob_name.replace("/", "_")
+    )
+
     with open(tmp_path, "wb") as fp:
         stream = container_client.download_blob(blob_name)
         stream.readinto(fp)
@@ -97,21 +108,30 @@ def process_blob(blob_name):
         return
 
     if ppt_already_indexed(blob_name):
-        logger.info(f"Skipping '{blob_name}' — already indexed in Chroma.")
+        logger.info(f"Skipping '{blob_name}' — already indexed.")
         return
 
     docs, metadatas, ids, texts = [], [], [], []
+    ppt_base = os.path.splitext(os.path.basename(blob_name))[0]
+
     for s in slides:
-        slide_id = f"{os.path.splitext(os.path.basename(blob_name))[0]}_Slide_{s['index']:02d}"
+        slide_index = s["index"]
+        slide_id = f"{ppt_base}_Slide_{slide_index:02d}"
         text = s.get("text", "") or ""
+
         metadata = {
+            # 🔑 CORE IDS (exact retrieval)
             "ppt_name": blob_name,
-            "slide_index": str(s["index"]),
+            "ppt_base": ppt_base,
             "slide_id": slide_id,
+            "slide_index": slide_index,     # ✅ INT (FIX)
             "title": text.split("\n", 1)[0] if text else "",
-            "tags": ", ".join(simple_tagger(text)), # ✅ FIXED: Convert list → string
-            "indexed_on": str(now_ts()) # ✅ FIXED: Ensure string
+
+            # 🔍 Optional helpers
+            "tags": ", ".join(simple_tagger(text)),   # ✅ LIST (FIX)
+            "indexed_on": str(now_ts())
         }
+
         ids.append(str(uuid.uuid4()))
         docs.append(text)
         metadatas.append(metadata)
@@ -119,50 +139,39 @@ def process_blob(blob_name):
 
     embeddings = azure_embed_func(texts)
     if not embeddings or len(embeddings) != len(docs):
-        logger.error("Embedding count mismatch or failed; aborting indexing for this file.")
+        logger.error("Embedding failed or mismatch; aborting.")
         return
 
-    # ✅ Insert into Chroma
     try:
-        collection.add(documents=docs, embeddings=embeddings, metadatas=metadatas, ids=ids)
-        logger.info(f"Indexed {len(docs)} slides from {blob_name} into Chroma.")
+        collection.add(
+            documents=docs,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids
+        )
+        logger.info(f"Indexed {len(docs)} slides from {blob_name}")
     except Exception as e:
-        logger.exception(f"Failed to insert slides from {blob_name} into Chroma: {e}")
+        logger.exception(f"Failed to insert slides from {blob_name}: {e}")
 
 
 def delete_ppt_from_chroma(ppt_name: str) -> None:
-    """
-    Delete all Chroma slide indexes that belong to the given PPT.
-    Matches your metadata:
-    metadata = { "ppt_name": blob_name, ... }
-    """
-
     logger.info(f"Deleting Chroma indexes for PPT: {ppt_name}")
-
     try:
-        # ✅ DIRECT DELETE — no pre-query (avoids Chroma API bug)
         collection.delete(where={"ppt_name": ppt_name})
-
-        # ✅ IMPORTANT: Persist the deletion to disk
-        # chroma_client.persist()
-
-        logger.info(f"✅ Successfully deleted Chroma indexes for PPT: {ppt_name}")
-
+        logger.info(f"Deleted Chroma indexes for PPT: {ppt_name}")
     except Exception as e:
-        logger.exception(f"❌ Failed to delete Chroma indexes for PPT: {ppt_name}")
+        logger.exception("Delete failed")
         raise e
 
 
 def main():
-    """Main ingestion process."""
-    logger.info("Starting ingestion into Chroma from Azure Blob (ppt-dataset)...")
+    logger.info("Starting ingestion into Chroma...")
     for b in container_client.list_blobs():
-        if b.name.endswith(".pptx") or b.name.endswith(".ppt"):
+        if b.name.lower().endswith((".pptx", ".ppt")):
             try:
                 process_blob(b.name)
             except Exception as e:
                 logger.exception(f"Failed to process {b.name}: {e}")
-
     logger.info("Ingestion complete.")
 
 
