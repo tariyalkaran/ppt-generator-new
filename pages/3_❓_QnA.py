@@ -3,7 +3,7 @@
 import os
 import streamlit as st
 from utils import text_client, get_env, logger
-from search_utils import semantic_search
+from search_utils import collection
 
 st.set_page_config(page_title="3 - Q&A", layout="wide")
 st.title("3 — Q&A (Slide-Specific Questions)")
@@ -36,61 +36,101 @@ def detect_slide_type(slide):
     return "content"
 
 
+
+def get_exact_slide_text(slide, max_chars=1200):
+    """
+    Fetch exact slide text using ppt_blob + slide_index
+    (NO embeddings, NO semantic search)
+    """
+
+    ppt_name = slide.get("ppt_blob")
+    slide_index = slide.get("slide_index")
+
+    if ppt_name is None or slide_index is None:
+        logger.warning("[QNA] Missing ppt_blob or slide_index")
+        return ""
+
+    try:
+        logger.info(
+            f"[QNA] Fetching slide from Chroma | ppt={ppt_name} | index={slide_index}"
+        )
+
+        res = collection.get(
+            where={
+                "$and": [
+                    {"ppt_name": ppt_name},
+                    {"slide_index": slide_index}
+                ]
+            }
+        )
+
+        docs = res.get("documents", [])
+        logger.info(f"[QNA] Retrieved {len(docs)} docs from Chroma")
+
+        if not docs:
+            return ""
+
+        return "\n".join(docs)[:max_chars]
+
+    except Exception:
+        logger.exception("[QNA] Chroma get() failed")
+        return ""
+
+
+
+
 def chroma_questions(slide, max_q=3):
-    slide_title = slide.get("title", "")
-    slide_index = slide.get("slide_index", "")
-
-    query = f"Slide {slide_index}: {slide_title}".strip()
-    results = semantic_search(query=query, top_k=5)
-
-    if not results:
-        return []
-
-    context = "\n".join(
-        r.get("text", "")[:700] for r in results if r.get("text")
-    ).strip()
+    """
+    Generate questions from EXACT slide text (no semantic search)
+    """
+    context = get_exact_slide_text(slide)
 
     if not context:
+        logger.warning(
+            f"No exact text found in Chroma for "
+            f"{slide.get('ppt_name')} | slide {slide.get('slide_index')}"
+        )
         return []
 
     prompt = f"""
-You are analysing a PowerPoint slide from a proposal deck.
+You are analysing a PowerPoint slide.
 
-REFERENCE CONTENT:
+SLIDE CONTENT:
 {context}
 
 TASK:
 Generate up to {max_q} diverse, non-overlapping questions
 to help customize this slide.
 
-Diversity rules:
+Rules:
 - Each question must focus on a DIFFERENT aspect
-- Avoid repeating objectives or key points
+- Avoid objectives or key-points phrasing
 - No generic questions
-
-Output rules:
-- Plain numbered text only
-- One question per line
+- Plain numbered list only
 """
+    try:
+        resp = text_client.chat.completions.create(
+            model=get_env("CHAT_MODEL", required=True),
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=300
+        )
 
-    resp = text_client.chat.completions.create(
-        model=get_env("CHAT_MODEL", required=True),
-        messages=[{"role": "user", "content": prompt}],
-        max_completion_tokens=300
-    )
+        raw = resp.choices[0].message.content or ""
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]
 
-    raw = resp.choices[0].message.content or ""
-    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        questions = []
+        for ln in lines:
+            if ln[0].isdigit():
+                q = ln.split(".", 1)[-1].strip()
+                if q:
+                    questions.append(q)
 
-    questions = []
-    for ln in lines:
-        if ln[0].isdigit():
-            q = ln.split(".", 1)[-1].strip()
-            if q:
-                questions.append(q)
+        return questions[:max_q]
 
-    return questions[:max_q]
-
+    except Exception as e:
+        logger.exception("LLM failed while generating questions from exact slide text")
+        return []
+    
 
 # ------------------------------------------------------------------
 # State init (CRITICAL FIX)
