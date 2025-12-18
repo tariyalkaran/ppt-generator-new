@@ -249,19 +249,46 @@ with col1:
     if st.button("⬅ Back to Slide Selection"):
         st.switch_page("pages/2_🖼️_Slide_Selection.py")
  
+# with col2:
+#     if st.button("➡ Generate PPT"):
+#         answers_for_generator = {}
+ 
+#         for slide in slides:
+#             idx = str(slide["slide_index"])
+#             answers_for_generator[idx] = st.session_state["answers_by_slide"].get(
+#                 slide["slide_id"], {}
+#             )
+ 
+#         st.session_state["generation_payload"] = {
+#             "selected_slides": slides,
+#             "answers_map": answers_for_generator
+#         }
+ 
+#         st.switch_page("pages/4_Generate_PPT.py")
+
+
+
 with col2:
-    if st.button("➡ Generate PPT"):
-        answers_for_generator = {}
- 
-        for slide in slides:
-            idx = str(slide["slide_index"])
-            answers_for_generator[idx] = st.session_state["answers_by_slide"].get(
-                slide["slide_id"], {}
-            )
- 
-        st.session_state["generation_payload"] = {
-            "selected_slides": slides,
-            "answers_map": answers_for_generator
-        }
- 
-        st.switch_page("pages/4_Generate_PPT.py")
+   if st.button("➡ Generate PPT"):
+       slides_for_generator = []
+       answers_for_generator = {}
+       for slide in slides:
+           slide_index = str(slide["slide_index"])
+           # ✅ FINAL TITLE (from reference slide / chroma)
+           slide_title = (
+               get_slide_title_from_chroma(slide)
+               or (slide.get("title") or "").strip()
+               or f"Slide {slide_index}"
+           )
+           slides_for_generator.append({
+               "slide_index": slide["slide_index"],
+               "title": slide_title     # ✅ EXPLICIT TITLE
+           })
+           answers_for_generator[slide_index] = st.session_state[
+               "answers_by_slide"
+           ].get(slide["slide_id"], {})
+       st.session_state["generation_payload"] = {
+           "slides": slides_for_generator,   # ✅ CLEAN STRUCT
+           "answers_map": answers_for_generator
+       }
+       st.switch_page("pages/4_Generate_PPT.py")
