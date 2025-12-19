@@ -249,46 +249,30 @@ with col1:
     if st.button("⬅ Back to Slide Selection"):
         st.switch_page("pages/2_🖼️_Slide_Selection.py")
  
-# with col2:
-#     if st.button("➡ Generate PPT"):
-#         answers_for_generator = {}
- 
-#         for slide in slides:
-#             idx = str(slide["slide_index"])
-#             answers_for_generator[idx] = st.session_state["answers_by_slide"].get(
-#                 slide["slide_id"], {}
-#             )
- 
-#         st.session_state["generation_payload"] = {
-#             "selected_slides": slides,
-#             "answers_map": answers_for_generator
-#         }
- 
-#         st.switch_page("pages/4_Generate_PPT.py")
-
-
-
 with col2:
    if st.button("➡ Generate PPT"):
-       slides_for_generator = []
        answers_for_generator = {}
+       slides_for_generator = []
        for slide in slides:
-           slide_index = str(slide["slide_index"])
-           # ✅ FINAL TITLE (from reference slide / chroma)
+           idx = str(slide["slide_index"])
+           # get title from chroma / original / fallback
            slide_title = (
                get_slide_title_from_chroma(slide)
                or (slide.get("title") or "").strip()
-               or f"Slide {slide_index}"
+               or f"Slide {idx}"
            )
+           # collect user answers
+           answers_for_generator[idx] = st.session_state["answers_by_slide"].get(
+               slide["slide_id"], {}
+           )
+           # PREPARE SLIDE DATA FOR GENERATOR
            slides_for_generator.append({
                "slide_index": slide["slide_index"],
-               "title": slide_title     # ✅ EXPLICIT TITLE
+               "slide_title": slide_title
            })
-           answers_for_generator[slide_index] = st.session_state[
-               "answers_by_slide"
-           ].get(slide["slide_id"], {})
+       # save to session state for generate_ppt_llm.py
        st.session_state["generation_payload"] = {
-           "slides": slides_for_generator,   # ✅ CLEAN STRUCT
+           "slides": slides_for_generator,
            "answers_map": answers_for_generator
        }
        st.switch_page("pages/4_Generate_PPT.py")
