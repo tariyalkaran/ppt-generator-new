@@ -6,7 +6,7 @@ from utils import text_client, get_env, logger
 from search_utils import collection
  
 st.set_page_config(page_title="3 - Q&A", layout="wide")
-st.title("3 — Q&A (Slide-Specific Questions)")
+st.title("Step 3 — Answer a Few Questions")
  
 # ------------------------------------------------------------------
 # Load selected slides
@@ -246,11 +246,11 @@ st.markdown("---")
 col1, col2 = st.columns(2)
  
 with col1:
-    if st.button("⬅ Back to Slide Selection"):
+    if st.button("Previous:Slide Selection"):
         st.switch_page("pages/2_🖼️_Slide_Selection.py")
  
 with col2:
-   if st.button("➡ Generate PPT"):
+   if st.button("Next:Preview PPT"):
        answers_for_generator = {}
        slides_for_generator = []
        for slide in slides:
@@ -275,4 +275,4 @@ with col2:
            "slides": slides_for_generator,
            "answers_map": answers_for_generator
        }
-       st.switch_page("pages/4_Generate_PPT.py")
+       st.switch_page("pages/4_📝_Preview_Slides.py")

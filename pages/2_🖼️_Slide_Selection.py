@@ -2,7 +2,7 @@
 import streamlit as st
 
 st.set_page_config(page_title="2 - Slide Selection", layout="wide")
-st.title("2 — Slide Selection (reference slides)")
+st.title("Step 2 — Select Your Slides")
 
 # -----------------------
 # Session init (REQUIRED)
@@ -49,7 +49,7 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("Continue to Q&A"):
+    if st.button("Next:Q&A"):
         if not st.session_state["selected_slides"]:
             st.error("Select at least one slide.")
         else:
@@ -62,5 +62,5 @@ with col1:
             st.switch_page("pages/3_❓_QnA.py")
 
 with col2:
-    if st.button("Back to Home"):
+    if st.button("Previous:Home"):
         st.switch_page("pages/1_Home.py")
